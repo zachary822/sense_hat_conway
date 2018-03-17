@@ -9,6 +9,8 @@ from collections import deque
 from colorsys import hsv_to_rgb
 
 import numpy as np
+from scipy.signal import convolve2d
+from math import floor
 
 try:
     from sense_hat import SenseHat
@@ -21,7 +23,11 @@ except ImportError:
         def __getattr__(self, item):
             return lambda *x, **y: None
 
-Y_SIZE, X_SIZE = 8, 8
+        def get_compass(self):
+            return np.random.uniform(0, 360)
+
+Y_SIZE, X_SIZE = 100, 100
+Y_VIEW, X_VIEW = floor(Y_SIZE / 2), floor(X_SIZE / 2)
 
 
 class BoringException(Exception):
@@ -33,6 +39,10 @@ class PeriodicityException(BoringException):
 
 
 class EmptyException(BoringException):
+    pass
+
+
+class NothingInViewException(EmptyException):
     pass
 
 
@@ -48,6 +58,10 @@ def new_seed() -> np.ndarray:
     return np.random.randint(0, 2, (Y_SIZE, X_SIZE), dtype=np.uint8)
 
 
+def get_color(num: float) -> np.ndarray:
+    return np.around(np.array(hsv_to_rgb(num, 1, 1)) * 255)
+
+
 def new_color() -> np.ndarray:
     """
     New random color with equal saturation and value
@@ -56,12 +70,17 @@ def new_color() -> np.ndarray:
     of the same brightness on the LED matrix.
     :return:
     """
-    return np.around(np.array(hsv_to_rgb(np.random.uniform(), 1, 1)) * 255)
+    return get_color(np.random.uniform())
+
+
+def life_step(state: np.ndarray) -> np.ndarray:
+    count = convolve2d(state, np.ones((3, 3), dtype=np.uint8), mode='same', boundary='wrap') - state
+    return ((count == 3) | (state & (count == 2))).astype(np.uint8)
 
 
 # np.random.seed(0)
 
-async def main(sense):
+async def main(sense: SenseHat):
     prev_seeds = deque(maxlen=30)
 
     # seed = np.random.choice(2, (y_size, x_size), True)
@@ -70,44 +89,43 @@ async def main(sense):
 
     generation = 0
 
+    def reset():
+        nonlocal generation, color, seed, prev_seeds
+        generation = 0
+        seed = new_seed()
+        color = new_color()
+        prev_seeds.clear()
+        sense.clear()
+
     while True:
         sl = asyncio.sleep(0.2)
 
         prev_seeds.append(seed)
 
-        p_seed = np.pad(seed, 1, mode='wrap')
-
-        state = np.zeros((Y_SIZE, X_SIZE), dtype=np.uint8)
-
-        it = np.nditer(seed, flags=['multi_index'], op_flags=['readonly'])
-
-        while not it.finished:
-            y, x = it.multi_index
-            score = p_seed[y:y + 3, x:x + 3].sum() - it[0]
-            if (not it[0] and score == 3) or (it[0] and 2 <= score < 4):
-                state[y, x] = 1
-            it.iternext()
-
-        s = state.reshape((-1, 1)).repeat(3, axis=1)
-        s[s[:, 0] == 1, :] = color
-        sense.set_pixels(s.tolist())
+        state = life_step(seed)
 
         try:
-            if not state.sum():
+            s = state[Y_VIEW - 4:Y_VIEW + 4, X_VIEW - 4:X_VIEW + 4]
+            s = s.reshape((-1, 1)).repeat(3, axis=1)
+            s[s[:, 0] == 1, :] = color
+            sense.set_pixels(s)
+
+            if not s.any():
+                raise NothingInViewException()
+
+            if not state.any():
                 raise EmptyException()
 
             for p in reversed(prev_seeds):
                 if (p == state).all():
                     raise PeriodicityException()
 
-            if generation > 300:
-                raise LongException()
+            # if generation > 300:
+            #     raise LongException()
         except BoringException:
+            await sl
             await asyncio.sleep(3)
-            generation = 0
-            seed = new_seed()
-            color = new_color()
-            prev_seeds.clear()
+            reset()
             continue
 
         seed = state
