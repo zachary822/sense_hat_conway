@@ -52,8 +52,8 @@ def new_color() -> np.ndarray:
     """
     New random color with equal saturation and value
 
-    Using hsv with saturation and value equal to one prevents from randomizing to
-    have colors of the same brightness on the LED matrix.
+    Using hsv with saturation and value equal to randomize to colors
+    of the same brightness on the LED matrix.
     :return:
     """
     return np.around(np.array(hsv_to_rgb(np.random.uniform(), 1, 1)) * 255)
