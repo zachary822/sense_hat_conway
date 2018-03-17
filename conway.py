@@ -5,12 +5,11 @@ Simple Conway's game of life on the Sense Hat
 import asyncio
 import signal
 import sys
-from collections import deque
 from colorsys import hsv_to_rgb
+from math import floor
 
 import numpy as np
 from scipy.signal import convolve2d
-from math import floor
 
 try:
     from sense_hat import SenseHat
@@ -28,6 +27,13 @@ except ImportError:
 
 Y_SIZE, X_SIZE = 100, 100
 Y_VIEW, X_VIEW = floor(Y_SIZE / 2), floor(X_SIZE / 2)
+THRESHOLD = round(Y_SIZE * X_SIZE * 0.05)
+
+a = np.array([
+    [1, 1, 1],
+    [1, 0, 1],
+    [1, 1, 1]
+], dtype=np.uint8)
 
 
 class BoringException(Exception):
@@ -74,33 +80,30 @@ def new_color() -> np.ndarray:
 
 
 def life_step(state: np.ndarray) -> np.ndarray:
-    count = convolve2d(state, np.ones((3, 3), dtype=np.uint8), mode='same', boundary='wrap') - state
+    count = convolve2d(state, a, mode='same', boundary='wrap')
     return ((count == 3) | (state & (count == 2))).astype(np.uint8)
 
 
 # np.random.seed(0)
 
 async def main(sense: SenseHat):
-    prev_seeds = deque(maxlen=30)
-
-    # seed = np.random.choice(2, (y_size, x_size), True)
     seed = new_seed()
     color = new_color()
 
     generation = 0
 
     def reset():
-        nonlocal generation, color, seed, prev_seeds
+        nonlocal generation, color, seed
         generation = 0
         seed = new_seed()
-        color = new_color()
-        prev_seeds.clear()
+        c = new_color()
+        while np.linalg.norm(c - color) < 50:
+            c = new_color()
+        color = c
         sense.clear()
 
     while True:
-        sl = asyncio.sleep(0.2)
-
-        prev_seeds.append(seed)
+        sl = asyncio.sleep(0.1)
 
         state = life_step(seed)
 
@@ -111,20 +114,17 @@ async def main(sense: SenseHat):
             sense.set_pixels(s)
 
             if not s.any():
-                raise NothingInViewException()
+                raise NothingInViewException("Nothing in view")
 
             if not state.any():
-                raise EmptyException()
+                raise EmptyException("Empty")
 
-            for p in reversed(prev_seeds):
-                if (p == state).all():
-                    raise PeriodicityException()
-
-            # if generation > 300:
-            #     raise LongException()
-        except BoringException:
+            if (seed ^ state).sum() < THRESHOLD:
+                raise LongException("Too few changes")
+        except BoringException as e:
+            print(e)
             await sl
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
             reset()
             continue
 
