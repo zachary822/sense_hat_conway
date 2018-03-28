@@ -27,7 +27,7 @@ except ImportError:
 
 Y_SIZE, X_SIZE = 100, 100
 Y_VIEW, X_VIEW = floor(Y_SIZE / 2), floor(X_SIZE / 2)
-THRESHOLD = round(Y_SIZE * X_SIZE * 0.05)
+THRESHOLD = round(Y_SIZE * X_SIZE * 0.08)
 
 a = np.array([
     [1, 1, 1],
@@ -65,7 +65,7 @@ def new_seed() -> np.ndarray:
 
 
 def get_color(num: float) -> np.ndarray:
-    return np.around(np.array(hsv_to_rgb(num, 1, 1)) * 255)
+    return np.around(np.array(hsv_to_rgb(num, 1, 1)) * 255).astype(np.int8)
 
 
 def new_color() -> np.ndarray:
@@ -77,6 +77,27 @@ def new_color() -> np.ndarray:
     :return:
     """
     return get_color(np.random.uniform())
+
+
+def to_rgb565(color: np.ndarray) -> np.ndarray:
+    """
+    RGB888 tuple to RGB565
+    :param color:
+    :return:
+    """
+    return color >> np.array([3, 2, 3]) & np.array([0x1f, 0x3f, 0x1f])
+
+
+def color_state(s: np.ndarray, c: np.ndarray) -> np.ndarray:
+    """
+    make state into list of color
+    :param s:
+    :param c:
+    :return:
+    """
+    s = s.reshape((-1, 1)).repeat(3, axis=1)
+    s[s[:, 0] == 1, :] = c
+    return s
 
 
 def life_step(state: np.ndarray) -> np.ndarray:
@@ -97,7 +118,8 @@ async def main(sense: SenseHat):
         generation = 0
         seed = new_seed()
         c = new_color()
-        while np.linalg.norm(c - color) < 50:
+        # the average distance between 2 points in the rgb565 colors is about 29.28
+        while np.linalg.norm(to_rgb565(c) - to_rgb565(color)) < 30:
             c = new_color()
         color = c
         sense.clear()
@@ -109,9 +131,7 @@ async def main(sense: SenseHat):
 
         try:
             s = state[Y_VIEW - 4:Y_VIEW + 4, X_VIEW - 4:X_VIEW + 4]
-            s = s.reshape((-1, 1)).repeat(3, axis=1)
-            s[s[:, 0] == 1, :] = color
-            sense.set_pixels(s)
+            sense.set_pixels(color_state(s, color))
 
             if not s.any():
                 raise NothingInViewException("Nothing in view")
